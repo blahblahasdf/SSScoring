@@ -22,10 +22,14 @@ from ssscoring.mapview import speedJumpTrajectory
 from ssscoring.notebook import SPEED_COLORS
 from ssscoring.notebook import graphJumpResult
 from ssscoring.notebook import initializePlot
+from ssscoring.units import UnitSystem, format_value_with_unit, meters_to_feet, kmh_to_mph
 
 import pandas as pd
 import streamlit as st
 
+# Initialize session state for unit system if not exists
+if 'unit_system' not in st.session_state:
+    st.session_state.unit_system = UnitSystem.MIXED
 
 # +++ implementation +++
 
@@ -45,7 +49,20 @@ def _setSideBarAndMain():
     else:
         st.session_state.elevation = None
         st.session_state.trackFiles = None
-    st.sidebar.metric('Elevation', value='%.1f m' % (0.0 if st.session_state.elevation == None else st.session_state.elevation))
+    # Add unit system selector
+    st.sidebar.selectbox(
+        'Unit System',
+        [system.value for system in UnitSystem],
+        index=[system.value for system in UnitSystem].index(st.session_state.unit_system.value),
+        key='unit_system_selector',
+        help='Choose how measurements are displayed'
+    )
+    st.session_state.unit_system = UnitSystem(st.session_state.unit_system_selector)
+
+    # Display elevation in selected unit system
+    elevation = 0.0 if st.session_state.elevation is None else st.session_state.elevation
+    elevation_str = format_value_with_unit(elevation, st.session_state.unit_system, "altitude")
+    st.sidebar.metric('Elevation', value=elevation_str)
     trackFiles = st.sidebar.file_uploader(
         'Track files',
         [ 'CSV' ],

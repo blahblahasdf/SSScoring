@@ -20,6 +20,7 @@ from ssscoring.notebook import graphAngle
 from ssscoring.notebook import graphJumpResult
 from ssscoring.notebook import initializeExtraYRanges
 from ssscoring.notebook import initializePlot
+from ssscoring.units import UnitSystem, format_value_with_unit, meters_to_feet, feet_to_meters, kmh_to_mph
 
 import os
 
@@ -113,7 +114,7 @@ def initDropZonesFromResource(resourceName: str) -> pd.DataFrame:
 
 def displayJumpDataIn(resultsTable: pd.DataFrame):
     """
-    Display the individual results, as a table.
+    Display the individual results as a table with unit system support.
 
     Arguments
     ---------
@@ -125,15 +126,58 @@ def displayJumpDataIn(resultsTable: pd.DataFrame):
     `ssscoring.datatypes.JumpResults`
     """
     table = resultsTable.copy()
-    table.vKMh = table.vKMh.apply(lambda x: round(x, 2))
-    table.hKMh = table.hKMh.apply(lambda x: round(x, 2))
-    table.deltaV = table.deltaV.apply(lambda x: round(x, 2))
-    table.deltaAngle = table.deltaAngle.apply(lambda x: round(x, 2))
-    table['altitude (ft)'] = table['altitude (ft)'].apply(lambda x: round(x, 1))
-    # TODO:  Decide if we'll keep this one.  Delete after 20250401 if present.
-    # table.netVectorKMh = table.netVectorKMh.apply(round)
+    
+    # Convert units based on selected unit system
+    if st.session_state.unit_system != UnitSystem.SI:
+        if 'vKMh' in table.columns:
+            table['vMPH'] = table.vKMh.apply(lambda x: kmh_to_mph(x))
+            table = table.drop('vKMh', axis=1)
+        if 'hKMh' in table.columns:
+            table['hMPH'] = table.hKMh.apply(lambda x: kmh_to_mph(x))
+            table = table.drop('hKMh', axis=1)
+        if 'altitude (ft)' in table.columns:
+            # Already in feet, just rename for consistency
+            table['altitude'] = table['altitude (ft)']
+            table = table.drop('altitude (ft)', axis=1)
+    else:
+        if 'vKMh' in table.columns:
+            table['vKMh'] = table.vKMh.apply(lambda x: round(x, 2))
+        if 'hKMh' in table.columns:
+            table['hKMh'] = table.hKMh.apply(lambda x: round(x, 2))
+        if 'altitude (ft)' in table.columns:
+            table['altitude'] = table['altitude (ft)'].apply(lambda x: feet_to_meters(x))
+            table = table.drop('altitude (ft)', axis=1)
+    
+    # Round remaining columns
+    if 'deltaV' in table.columns:
+        table.deltaV = table.deltaV.apply(lambda x: round(x, 2))
+    if 'deltaAngle' in table.columns:
+        table.deltaAngle = table.deltaAngle.apply(lambda x: round(x, 2))
+    
+    # Configure column units in headers
+    column_config = {}
+    for col in table.columns:
+        if col in ['vKMh', 'hKMh']:
+            column_config[col] = st.column_config.NumberColumn(
+                label=f"{col} (km/h)",
+                format='%.2f'
+            )
+        elif col in ['vMPH', 'hMPH']:
+            column_config[col] = st.column_config.NumberColumn(
+                label=f"{col} (mph)",
+                format='%.2f'
+            )
+        elif col == 'altitude':
+            unit = 'm' if st.session_state.unit_system == UnitSystem.SI else 'ft'
+            column_config[col] = st.column_config.NumberColumn(
+                label=f"{col} ({unit})",
+                format='%.1f'
+            )
+        else:
+            column_config[col] = st.column_config.NumberColumn(format='%.2f')
+    
     table.index = ['']*len(table)
-    st.dataframe(table, hide_index=True)
+    st.dataframe(table, column_config=column_config, hide_index=True)
 
 
 def interpretJumpResult(tag: str,

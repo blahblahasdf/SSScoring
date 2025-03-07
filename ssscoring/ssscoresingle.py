@@ -20,10 +20,14 @@ from ssscoring.calc import getFlySightDataFromCSVBuffer
 from ssscoring.calc import processJump
 from ssscoring.datatypes import JumpStatus
 from ssscoring.mapview import speedJumpTrajectory
+from ssscoring.units import UnitSystem, format_value_with_unit, meters_to_feet, kmh_to_mph
 
 import pandas as pd
 import streamlit as st
 
+# Initialize session state for unit system if not exists
+if 'unit_system' not in st.session_state:
+    st.session_state.unit_system = UnitSystem.MIXED
 
 # *** implementation ***
 
@@ -43,7 +47,20 @@ def _setSideBarAndMain():
     else:
         st.session_state.elevation = None
         st.session_state.trackFile = None
-    st.sidebar.metric('Elevation', value='%.1f m' % (0.0 if st.session_state.elevation == None else st.session_state.elevation))
+    # Add unit system selector
+    st.sidebar.selectbox(
+        'Unit System',
+        [system.value for system in UnitSystem],
+        index=[system.value for system in UnitSystem].index(st.session_state.unit_system.value),
+        key='unit_system_selector',
+        help='Choose how measurements are displayed'
+    )
+    st.session_state.unit_system = UnitSystem(st.session_state.unit_system_selector)
+
+    # Display elevation in selected unit system
+    elevation = 0.0 if st.session_state.elevation is None else st.session_state.elevation
+    elevation_str = format_value_with_unit(elevation, st.session_state.unit_system, "altitude")
+    st.sidebar.metric('Elevation', value=elevation_str)
     trackFile = st.sidebar.file_uploader('Track file', [ 'CSV' ], disabled=st.session_state.elevation == None, key = st.session_state.uploaderKey)
     if trackFile:
         st.session_state.trackFile = trackFile
@@ -63,17 +80,55 @@ def _getJumpDataFrom(trackFileBuffer: str) -> pd.DataFrame:
 
 
 def _displayAllJumpDataIn(data: pd.DataFrame):
-    columns = [ 'plotTime' ] + [ column for column in data.columns if column != 'plotTime' and column != 'timeUnix' ]
+    # Create a copy of the dataframe to avoid modifying the original
+    display_data = data.copy()
+    
+    # Convert units based on selected unit system
+    if st.session_state.unit_system != UnitSystem.SI:
+        # Convert altitude columns if not in SI
+        altitude_cols = ['altitudeMSL', 'altitudeAGL']
+        for col in altitude_cols:
+            if col in display_data.columns:
+                display_data[col] = display_data[col].apply(lambda x: meters_to_feet(x))
+                
+        # Convert speed columns if not in SI
+        speed_cols = ['speedVertical', 'speedHorizontal', 'speed3D']
+        for col in speed_cols:
+            if col in display_data.columns:
+                display_data[col] = display_data[col].apply(lambda x: kmh_to_mph(x))
+
+    columns = ['plotTime'] + [column for column in display_data.columns if column != 'plotTime' and column != 'timeUnix']
+    
+    # Configure column units in headers
+    unit_suffixes = {
+        'altitudeMSL': ' (ft)' if st.session_state.unit_system != UnitSystem.SI else ' (m)',
+        'altitudeAGL': ' (ft)' if st.session_state.unit_system != UnitSystem.SI else ' (m)',
+        'speedVertical': ' (mph)' if st.session_state.unit_system != UnitSystem.SI else ' (km/h)',
+        'speedHorizontal': ' (mph)' if st.session_state.unit_system != UnitSystem.SI else ' (km/h)',
+        'speed3D': ' (mph)' if st.session_state.unit_system != UnitSystem.SI else ' (km/h)',
+    }
+    
+    column_config = {
+        'plotTime': st.column_config.NumberColumn(format='%.02f'),
+        'speedAngle': st.column_config.NumberColumn(format='%.02f'),
+        'speedAccuracyISC': st.column_config.NumberColumn(format='%.02f'),
+    }
+    
+    # Add unit suffixes to column headers and format configuration
+    for col in columns:
+        if col in unit_suffixes:
+            column_config[col] = st.column_config.NumberColumn(
+                label=f"{col}{unit_suffixes[col]}",
+                format='%.02f'
+            )
+    
     st.html('<h3>All rows of jump data</h3>')
-    st.dataframe(data,
+    st.dataframe(
+        display_data,
         column_order=columns,
-        # TODO:  Decide if we apply the same format to all columns
-        column_config={
-            'plotTime': st.column_config.NumberColumn(format='%.02f'),
-            'speedAngle': st.column_config.NumberColumn(format='%.02f'),
-            'speedAccuracyISC': st.column_config.NumberColumn(format='%.02f'),
-        },
-        hide_index=True)
+        column_config=column_config,
+        hide_index=True
+    )
 
 
 def _displayScoresIn(rawData: dict):
